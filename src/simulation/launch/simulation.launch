@@ -1,0 +1,143 @@
+<launch>
+  <arg name="load_params" default="true" />
+  <arg name="corrupt_state_estimate" default="true" />
+  <arg name="right_image_topic" default="/realsense/rgb/right_image_raw" />
+  <arg name="right_info_topic" default="/realsense/rgb/right_image_info" />
+  <arg name="left_image_topic" default="/realsense/rgb/left_image_raw" />
+  <arg name="left_info_topic" default="/realsense/rgb/left_image_info" />
+  <arg name="depth_image_topic" default="/realsense/depth/image" />
+  <arg name="depth_info_topic" default="/realsense/depth/camera_info" />
+
+  <include file="$(find simulation)/launch/unity_ros.launch" >
+    <arg name="load_params" value="$(arg load_params)" />
+    <arg name="right_image_topic" value="$(arg right_image_topic)" />
+    <arg name="right_info_topic" value="$(arg right_info_topic)" />
+    <arg name="left_image_topic" value="$(arg left_image_topic)" />
+    <arg name="left_info_topic" value="$(arg left_info_topic)" />
+    <arg name="depth_image_topic" value="$(arg depth_image_topic)" />
+    <arg name="depth_info_topic" value="$(arg depth_info_topic)" />
+  </include>
+
+  <node name="Simulation" pkg="simulation" type="RoboDog_Build.x86_64"/>
+
+  <node pkg="simulation"
+        type="state_estimate_corruptor_node"
+        name="state_estimate_corruptor"
+        output="screen">
+
+    <!-- random-walk drift factor (grows with distance traveled) (sigma / m) -->
+    <param if="$(arg corrupt_state_estimate)" name="drift_rw_factor" value="0.03"/>
+    <param unless="$(arg corrupt_state_estimate)" name="drift_rw_factor" value="0.0"/>
+
+    <!-- independent white noise -->
+    <param if="$(arg corrupt_state_estimate)" name="pos_white_sig" value="0.005"/>
+    <param unless="$(arg corrupt_state_estimate)" name="pos_white_sig" value="0.0"/>
+
+    <!-- average number of seconds between jumps/drift updates -->
+    <param if="$(arg corrupt_state_estimate)" name="jump_seconds" value="20.0"/>
+    <param unless="$(arg corrupt_state_estimate)" name="jump_seconds" value="-1.0"/>
+  </node>
+
+  <node name="w_to_unity" pkg="simulation" type="w_to_unity"/>
+  <node name="goal_pub" pkg="simulation" type="goal_pub"/>
+
+  <node pkg="tf2_ros" type="static_transform_publisher"
+        name="sim_true_body"      args="0 0 0 0 0 0 /Quadrotor/TrueState /true_body" />
+
+  <node pkg="tf2_ros" type="static_transform_publisher"
+        name="sim_world"      args="0 0 0 0 0 0 /Quadrotor/TrueState /world" />
+
+  <node pkg="tf2_ros" type="static_transform_publisher"
+        name="sim_rgb_camera"      args="0 0 0 0 0 0 /camera /Quadrotor/RGBCameraLeft " />
+
+  <node pkg="tf2_ros" type="static_transform_publisher"
+        name="sim_depth_camera"      args="0 0 0 0 0 0 /depth_camera /Quadrotor/DepthCamera" />
+
+  <node pkg="tf2_ros" type="static_transform_publisher"
+        name="sim_left_camera"      args="0 0 0 0 0 0 /camera /Quadrotor/RGBCameraLeft" />
+
+  <node pkg="tf2_ros" type="static_transform_publisher"
+        name="camera_to_body"      args="0 0 0 0 0 0 /true_body /camera" />
+
+  <node pkg="tf2_ros" type="static_transform_publisher"
+        name="depth_camera_to_body"      args="0 0 0 0 0 0 /true_body /depth_camera" />
+
+  <node pkg="tf2_ros" type="static_transform_publisher"
+        name="depth_camera_frame_to_body"      args="0 0 0 0 0 -1.745 /true_body /RoboDog/base_link/SensorHolder/Sensors/DepthCamera" />
+
+
+  <!-- depth_img to Piont Cloud -->
+  <node pkg="nodelet" type="nodelet" name="nodelet_manager" args="manager" />
+
+  <node pkg="nodelet" type="nodelet" name="nodelet1"
+  
+      args="load depth_image_proc/point_cloud_xyz nodelet_manager">
+      <remap from="camera_info" to="/realsense/depth/camera_info"/>
+      <remap from="image_rect" to="/realsense/depth/image"/>
+      <remap from="points" to="/pointcloud"/>
+
+
+  </node>
+
+
+  <node pkg="octomap_server" type="octomap_server_node" name="octomap_server">
+
+      <param name="resolution" value="0.08" />
+
+      <param name="rate" value="50.0" />
+
+      <param name="frame_id" type="string" value="world" />
+
+      <param name="base_frame_id" type="string" value="world" />
+
+      <param name="filter_ground" type="bool" value="true" />
+
+
+      <!-- maximum range to integrate -->
+      <param name="sensor_model/max_range" value="15.0" />
+
+      <!-- filter out step and slope -->
+      <param name="pointcloud_min_z" value="0.167" />
+      <param name="pointcloud_max_z" value="3" /> 
+
+      <param name="occupancy_min_z" value="0.167" /> 
+      <param name="occupancy_max_z" value="3" /> 
+
+      <!-- <remap from="cloud_in" to="/filtered_point_cloud" /> -->
+      <remap from="cloud_in" to="/pointcloud" />
+      
+  </node>
+
+  <node pkg="tf2_ros" type="static_transform_publisher"
+        name="world_to_map"      args="0 0 0 0 0 0 /world /map" />
+  <node pkg = "map_server" type = "map_server" name = "load_static_map" args = "$(find simulation)/param/offline_map.yaml">
+      <remap from="map" to="/static_map_offline" />
+  </node>    
+
+
+  <!-- move_base -->
+  <node pkg="move_base" type="move_base" respawn="false" name="move_base_Robodog">
+      <rosparam file="$(find simulation)/param/costmap_common_params.yaml" command="load" ns="global_costmap" /> 
+      <rosparam file="$(find simulation)/param/costmap_common_params.yaml" command="load" ns="local_costmap" />
+      <rosparam file="$(find simulation)/param/local_costmap_params.yaml" command="load" />
+      <rosparam file="$(find simulation)/param/global_costmap_params.yaml" command="load" /> 
+      <rosparam file="$(find simulation)/param/global_planner_params.yaml" command="load" /> 
+      <rosparam file="$(find simulation)/param/base_local_planner_params.yaml" command="load" />
+      <rosparam file="$(find simulation)/param/local_planner_params.yaml" command="load" />
+      
+      <remap from="/move_base_simple/goal" to="/goal_topic" />
+      <!-- <param name="base_local_planner" value="dwa_local_planner/DWAPlannerROS" /> -->
+      <param name="base_global_planner" value="navfn/NavfnROS" />
+
+
+      <param name="planner_frequency" value="5.0" />
+      <param name="planner_patience" value="5.0" />
+      <param name="controller_frequency" value="5.0" />
+
+  </node>
+
+  <!-- RVIZ -->
+  <node type="rviz" name="rviz" pkg="rviz" args="-d $(find simulation)/launch/Robodog.rviz"/>
+
+
+</launch>

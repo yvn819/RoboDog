@@ -1,0 +1,12 @@
+<launch>
+
+  <node name="controller_node" pkg="controller_pkg" type="controller_node"/>
+
+  <node name="pathplanning_node" pkg="controller_pkg" type="pathplanning_node"/>
+
+  <!-- <node name="visualization" pkg="controller_pkg" type="visualization"/> -->
+
+  <!-- <node name="test_controller" pkg="controller_pkg" type="test_controller"/> -->
+
+
+</launch>
